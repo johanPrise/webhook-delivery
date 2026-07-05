@@ -1,6 +1,6 @@
 // Schéma initial — étape 0
-// Trois modèles : Application (le client), Endpoint (destination + secret), Event (l'événement).
-// DeliveryAttempt sera ajouté à l'étape 2.
+// Quatre modèles : Application (le client), Endpoint (destination + secret),
+// Event (l'événement), DeliveryAttempt (traçabilité des tentatives, étape 2).
 
 generator client {
   provider = "prisma-client-js"
@@ -74,9 +74,42 @@ model Event {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  attempts DeliveryAttempt[]
+
   @@unique([applicationId, idempotencyKey])
   // Pour le worker et le cron de réconciliation : "les événements à traiter".
   @@index([status, nextAttemptAt])
   // Pour le dashboard : liste paginée par application, triée par date.
   @@index([applicationId, createdAt])
+}
+
+// Une tentative de livraison d'un Event. Table d'ajout seul (append-only) :
+// une ligne par essai, jamais mise à jour — c'est la timeline du dashboard (étape 6).
+model DeliveryAttempt {
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id])
+
+  // 1 pour le premier essai, incrémenté à chaque retry (backoff, étape 3).
+  attemptNumber Int
+
+  // Code HTTP reçu du destinataire. Null si aucune réponse (timeout, DNS,
+  // connexion refusée...) — dans ce cas `error` porte le détail.
+  statusCode Int?
+  // Vrai si un 2xx a été reçu ; dérivé mais stocké pour ne pas rejouer la
+  // logique de succès à chaque lecture (dashboard, métriques étape 7).
+  success    Boolean
+  // Durée de la tentative en millisecondes, du départ de la requête à la
+  // réponse ou au timeout (timeout strict de 5s, voir PLAN.md étape 2).
+  durationMs Int
+
+  // Réponse du destinataire, tronquée (ex. 2 Ko) pour ne pas gonfler la table.
+  responseBody String?
+  // Message d'erreur si `statusCode` est null (timeout, erreur réseau).
+  error        String?
+
+  createdAt DateTime @default(now())
+
+  // Pour la timeline d'un événement, dans l'ordre chronologique.
+  @@index([eventId, attemptNumber])
 }
