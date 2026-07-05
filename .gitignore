@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# NestJS (apps/api)
+apps/api/dist/
+
+# Next.js (apps/dashboard)
+.next/
+next-env.d.ts
+
+# Prisma — client généré
+generated/
+**/generated/prisma/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing / coverage
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+.turbo/
+.eslintcache
+
+# IDE / éditeurs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker — volumes locaux éventuels
+pgdata/

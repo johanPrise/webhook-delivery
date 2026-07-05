@@ -1,0 +1,38 @@
+
+services:
+  db:
+    image: postgres:17
+    container_name: webhook-delivery-db
+    restart: unless-stopped
+    # Host 5432 is already taken (local Postgres / SSH tunnel), so expose on 5433.
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: webhooks
+    volumes:
+      - webhook_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d webhooks"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: webhook-delivery-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - webhook_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  webhook_pgdata:
+  webhook_redisdata:

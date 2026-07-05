@@ -1,0 +1,17 @@
+{
+  "name": "@webhook/shared",
+  "module": "index.ts",
+  "main": "index.ts",
+  "types": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

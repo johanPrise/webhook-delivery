@@ -1,0 +1,5 @@
+{
+  "name": "webhook-delivery",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"]
+}

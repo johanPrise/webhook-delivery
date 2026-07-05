@@ -1,0 +1,82 @@
+// Schéma initial — étape 0
+// Trois modèles : Application (le client), Endpoint (destination + secret), Event (l'événement).
+// DeliveryAttempt sera ajouté à l'étape 2.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Le client du service : une application émettrice (ex. "Facturio").
+model Application {
+  id         String   @id @default(cuid())
+  name       String
+  // On stocke un hash de la clé API, jamais la clé en clair.
+  // La clé n'est montrée qu'une fois à la création (comme Stripe/GitHub).
+  apiKeyHash String   @unique
+  createdAt  DateTime @default(now())
+
+  endpoints Endpoint[]
+  events    Event[]
+}
+
+// Une destination de livraison : l'URL d'un destinataire final.
+model Endpoint {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+
+  url         String
+  // Secret HMAC propre à cet endpoint, utilisé pour signer chaque livraison (étape 4).
+  secret      String
+  description String?
+  // Désactiver un endpoint stoppe les livraisons sans le supprimer (l'historique reste).
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  events Event[]
+
+  @@index([applicationId])
+}
+
+enum EventStatus {
+  PENDING // accepté, pas encore tenté
+  RETRYING // au moins un échec, réessai planifié
+  DELIVERED // livré (2xx reçu du destinataire)
+  FAILED // épuisement des tentatives → dead letter
+}
+
+// Un événement à livrer. C'est LA table centrale : source de vérité (ADR-001).
+model Event {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  endpointId    String
+  endpoint      Endpoint    @relation(fields: [endpointId], references: [id])
+
+  // Type métier fourni par le client, ex. "invoice.paid".
+  type    String
+  payload Json
+
+  // Idempotence côté ingestion : si le client renvoie le même couple
+  // (application, clé), on ne crée PAS de second événement.
+  // La contrainte unique en base fait le travail — pas de logique applicative fragile.
+  idempotencyKey String?
+
+  status        EventStatus @default(PENDING)
+  attemptCount  Int         @default(0)
+  // Prochaine tentative planifiée (backoff). Null si DELIVERED ou FAILED.
+  nextAttemptAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([applicationId, idempotencyKey])
+  // Pour le worker et le cron de réconciliation : "les événements à traiter".
+  @@index([status, nextAttemptAt])
+  // Pour le dashboard : liste paginée par application, triée par date.
+  @@index([applicationId, createdAt])
+}
