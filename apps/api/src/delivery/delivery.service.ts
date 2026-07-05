@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueueService } from '../queue/queue.service';
+import { computeBackoffDelayMs } from './backoff';
 
 const DELIVERY_TIMEOUT_MS = 5000;
 const RESPONSE_BODY_MAX_LENGTH = 2000;
@@ -8,7 +10,10 @@ const RESPONSE_BODY_MAX_LENGTH = 2000;
 export class DeliveryService {
   private readonly logger = new Logger(DeliveryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queue: QueueService,
+  ) {}
 
   // Appelé par le worker BullMQ. Ne fait jamais confiance au job : l'ID est
   // le seul contenu transporté (ADR-001), l'état réel est relu ici.
@@ -55,8 +60,17 @@ export class DeliveryService {
 
     const durationMs = Math.round(performance.now() - startedAt);
 
-    // Le statut RETRYING/backoff/dead-letter viennent à l'étape 3 : ici, une
-    // seule tentative, tracée, l'événement reste PENDING s'il échoue.
+    // Backoff exponentiel + jitter, dead letter après épuisement des paliers
+    // (ADR-002). `null` = plus de palier disponible → FAILED, terminal.
+    const retryDelayMs = success ? null : computeBackoffDelayMs(attemptNumber);
+    const status = success
+      ? 'DELIVERED'
+      : retryDelayMs !== null
+        ? 'RETRYING'
+        : 'FAILED';
+    const nextAttemptAt =
+      retryDelayMs !== null ? new Date(Date.now() + retryDelayMs) : null;
+
     await this.prisma.$transaction([
       this.prisma.deliveryAttempt.create({
         data: {
@@ -71,16 +85,22 @@ export class DeliveryService {
       }),
       this.prisma.event.update({
         where: { id: event.id },
-        data: {
-          attemptCount: attemptNumber,
-          status: success ? 'DELIVERED' : event.status,
-        },
+        data: { attemptCount: attemptNumber, status, nextAttemptAt },
       }),
     ]);
 
     this.logger.log(
       `Event ${event.id} tentative #${attemptNumber} → ${success ? 'OK' : 'ÉCHEC'} ` +
-        `(${statusCode ?? 'sans réponse'}, ${durationMs}ms)`,
+        `(${statusCode ?? 'sans réponse'}, ${durationMs}ms) — statut ${status}` +
+        (retryDelayMs !== null
+          ? `, prochain essai dans ${Math.round(retryDelayMs / 1000)}s`
+          : ''),
     );
+
+    // En dehors de la transaction : la programmation du retry est un effet de
+    // bord externe (Redis), jamais un motif d'échec de l'écriture en base.
+    if (retryDelayMs !== null) {
+      await this.queue.enqueueDelivery(event.id, retryDelayMs);
+    }
   }
 }
