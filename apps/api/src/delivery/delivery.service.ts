@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { computeBackoffDelayMs } from './backoff';
+import { signWebhookPayload } from './signature';
 
 const DELIVERY_TIMEOUT_MS = 5000;
 const RESPONSE_BODY_MAX_LENGTH = 2000;
@@ -40,15 +41,27 @@ export class DeliveryService {
     let responseBody: string | null = null;
     let error: string | null = null;
 
+    const rawBody = JSON.stringify({
+      id: event.id,
+      type: event.type,
+      payload: event.payload,
+    });
+    const timestampSeconds = Math.floor(Date.now() / 1000);
+    const signature = signWebhookPayload(
+      event.endpoint.secret,
+      timestampSeconds,
+      rawBody,
+    );
+
     try {
       const response = await fetch(event.endpoint.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          id: event.id,
-          type: event.type,
-          payload: event.payload,
-        }),
+        headers: {
+          'content-type': 'application/json',
+          'x-webhook-timestamp': String(timestampSeconds),
+          'x-webhook-signature': signature,
+        },
+        body: rawBody,
         signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       });
       statusCode = response.status;
@@ -63,13 +76,19 @@ export class DeliveryService {
     // Backoff exponentiel + jitter, dead letter après épuisement des paliers
     // (ADR-002). `null` = plus de palier disponible → FAILED, terminal.
     const retryDelayMs = success ? null : computeBackoffDelayMs(attemptNumber);
-    const status = success
-      ? 'DELIVERED'
-      : retryDelayMs !== null
-        ? 'RETRYING'
-        : 'FAILED';
-    const nextAttemptAt =
-      retryDelayMs !== null ? new Date(Date.now() + retryDelayMs) : null;
+    const willRetry = !success && retryDelayMs !== null;
+
+    let status: 'DELIVERED' | 'RETRYING' | 'FAILED';
+    if (success) {
+      status = 'DELIVERED';
+    } else if (willRetry) {
+      status = 'RETRYING';
+    } else {
+      status = 'FAILED';
+    }
+    const nextAttemptAt = willRetry
+      ? new Date(Date.now() + retryDelayMs)
+      : null;
 
     await this.prisma.$transaction([
       this.prisma.deliveryAttempt.create({
@@ -89,17 +108,17 @@ export class DeliveryService {
       }),
     ]);
 
+    const nextAttemptSuffix = willRetry
+      ? `, prochain essai dans ${Math.round(retryDelayMs / 1000)}s`
+      : '';
     this.logger.log(
       `Event ${event.id} tentative #${attemptNumber} → ${success ? 'OK' : 'ÉCHEC'} ` +
-        `(${statusCode ?? 'sans réponse'}, ${durationMs}ms) — statut ${status}` +
-        (retryDelayMs !== null
-          ? `, prochain essai dans ${Math.round(retryDelayMs / 1000)}s`
-          : ''),
+        `(${statusCode ?? 'sans réponse'}, ${durationMs}ms) — statut ${status}${nextAttemptSuffix}`,
     );
 
     // En dehors de la transaction : la programmation du retry est un effet de
     // bord externe (Redis), jamais un motif d'échec de l'écriture en base.
-    if (retryDelayMs !== null) {
+    if (willRetry) {
       await this.queue.enqueueDelivery(event.id, retryDelayMs);
     }
   }
