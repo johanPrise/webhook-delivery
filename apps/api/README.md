@@ -25,6 +25,39 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Vérifier la signature d'un webhook
+
+Chaque livraison porte deux en-têtes :
+
+- `X-Webhook-Timestamp` : timestamp Unix (secondes) au moment de l'envoi.
+- `X-Webhook-Signature` : `HMAC-SHA256(secret, "<timestamp>.<corps brut>")`, en hexadécimal.
+
+Le `secret` est celui affiché à la création de l'Endpoint (non ré-affichable ensuite).
+Vérifiez la signature **avant** de parser le JSON, sur le corps brut de la requête :
+
+```js
+const crypto = require('crypto');
+
+function verifyWebhook(secret, timestamp, signature, rawBody) {
+  // Anti-rejeu : rejette une requête interceptée et rejouée plus tard.
+  const ageSeconds = Math.abs(Date.now() / 1000 - Number(timestamp));
+  if (ageSeconds > 300) return false;
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${timestamp}.${rawBody}`)
+    .digest('hex');
+
+  // timingSafeEqual, jamais `===`, pour ne pas fuiter la signature via le
+  // temps de comparaison.
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(signature, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+```
+
+Voir `ADR-003-signature-hmac.md` pour le détail du choix de format.
+
 ## Project setup
 
 ```bash

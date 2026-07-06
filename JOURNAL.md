@@ -45,3 +45,14 @@ correspondant) : repris et livrés dès le premier cycle. La marge de 30s avant 
 un événement "bloqué" accepte un risque résiduel de double traitement si un job en retard
 et un cycle de réconciliation se croisent — pas de verrou distribué en V1, jugé
 suffisant au vu du volume visé.
+
+## Étape 4 — Signatures HMAC
+
+Rien de bloquant techniquement ; le point à ne pas rater était de signer le **corps brut**
+exact envoyé sur le fil (`rawBody`, figé en chaîne une seule fois avant `fetch`), pas une
+reconstruction JSON côté vérification — un `JSON.parse` puis `JSON.stringify` peut changer
+l'ordre des clés et casser une comparaison naïve. Le récepteur de test vérifie maintenant
+réellement la signature (activable via `?secret=` dans l'URL de l'Endpoint, cohérent avec
+le pilotage par query params déjà en place). Vérifié avec des requêtes forgées à la main
+(openssl) : signature valide acceptée, payload trafiqué après signature rejeté (401,
+signature invalide), timestamp vieux de 400s rejeté (401, hors fenêtre des 5 min).
