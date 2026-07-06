@@ -1,12 +1,20 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
+  Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { CreateEventSchema, type CreateEventInput } from '@webhook/shared';
+import {
+  CreateEventSchema,
+  ListEventsQuerySchema,
+  type CreateEventInput,
+  type ListEventsQuery,
+} from '@webhook/shared';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentApplication } from '../auth/current-application.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -17,6 +25,22 @@ import type { Application } from '@prisma/client';
 @UseGuards(ApiKeyGuard)
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
+
+  @Get()
+  list(
+    @CurrentApplication() application: Application,
+    @Query(new ZodValidationPipe(ListEventsQuerySchema)) query: ListEventsQuery,
+  ) {
+    return this.eventsService.list(application.id, query);
+  }
+
+  @Get(':id')
+  findOne(
+    @CurrentApplication() application: Application,
+    @Param('id') id: string,
+  ) {
+    return this.eventsService.findOne(application.id, id);
+  }
 
   @Post()
   @HttpCode(202)

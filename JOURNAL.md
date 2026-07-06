@@ -56,3 +56,16 @@ réellement la signature (activable via `?secret=` dans l'URL de l'Endpoint, coh
 le pilotage par query params déjà en place). Vérifié avec des requêtes forgées à la main
 (openssl) : signature valide acceptée, payload trafiqué après signature rejeté (401,
 signature invalide), timestamp vieux de 400s rejeté (401, hors fenêtre des 5 min).
+
+## Étape 5 — Dashboard
+
+Le point le plus piégeux n'était pas Next.js 16 (breaking changes lues à l'avance dans
+`node_modules/next/dist/docs/` : `middleware.ts` → `proxy.ts`, `cookies()`/`params` async)
+mais la cohérence de session pendant la régénération de clé API : l'action régénère la clé
+côté API (l'ancienne devient invalide immédiatement) puis doit reposer le cookie avec la
+nouvelle **dans la même Server Action**, sinon l'utilisateur se déconnecte lui-même en
+cliquant sur le bouton. Autre limite pratique : `curl` ne peut pas simuler les Server
+Actions (protocole de sérialisation interne à Next, pas un simple POST de formulaire) —
+tests réalisés via Playwright (navigateur réel) : connexion, détail d'événement, création
+et désactivation d'un endpoint, régénération de clé avec vérification que la session reste
+valide juste après.
